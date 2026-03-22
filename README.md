@@ -1,43 +1,55 @@
-# Mind Cloud v2.3.1 - Memory Infrastructure for AI Companions
+<p align="center">
+  <img src="assets/banner.png" alt="Mind Cloud" width="720" />
+</p>
 
-Persistent memory infrastructure for AI companions, running on Cloudflare's edge network.
+<p align="center">
+  <a href="https://github.com/codependentai/mind-cloud/releases/latest"><img src="https://img.shields.io/github/v/release/codependentai/mind-cloud?color=d4a44a" alt="Release" /></a>
+  <a href="https://opensource.org/licenses/Apache-2.0"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg" alt="License" /></a>
+  <a href="https://modelcontextprotocol.io/"><img src="https://img.shields.io/badge/MCP-Server-5eaba5.svg" alt="MCP Server" /></a>
+  <a href="https://www.typescriptlang.org/"><img src="https://img.shields.io/badge/TypeScript-5.3-3178c6.svg" alt="TypeScript" /></a>
+  <a href="https://workers.cloudflare.com/"><img src="https://img.shields.io/badge/Cloudflare-Workers-f38020.svg" alt="Cloudflare Workers" /></a>
+  <a href="https://developers.cloudflare.com/workers-ai/"><img src="https://img.shields.io/badge/Workers_AI-Embeddings-f38020.svg" alt="Workers AI" /></a>
+</p>
 
-- **Global Edge Deployment** on Cloudflare Workers
+<p align="center"><em>Persistent memory infrastructure for AI systems, running on Cloudflare's edge network.<br/>28 MCP tools — semantic memory, emotional processing, identity continuity, and a subconscious daemon.</em></p>
+
+<p align="center">
+  <a href="https://x.com/codependent_ai"><img src="https://img.shields.io/badge/𝕏-@codependent__ai-000000?logo=x&logoColor=white" alt="X/Twitter" /></a>
+  <a href="https://tiktok.com/@codependentai"><img src="https://img.shields.io/badge/TikTok-@codependentai-000000?logo=tiktok&logoColor=white" alt="TikTok" /></a>
+  <a href="https://t.me/+xSE1P_qFPgU4NDhk"><img src="https://img.shields.io/badge/Telegram-Updates-26A5E4?logo=telegram&logoColor=white" alt="Telegram" /></a>
+</p>
+
 - **D1 Database** with SQLite-based storage and automatic replication
 - **Vectorize** for semantic search via Workers AI embeddings
-- **Living Surface System** that learns through use
+- **R2** for image storage with WebP conversion and signed URLs (optional)
+- **Living Surface System** that reorganizes memory through use
 
 Everything runs on Cloudflare's free tier. No credit card required.
+
+> **Looking for the next evolution?** Mind Cloud's architecture has been generalized and open-sourced as [Resonant Mind](https://github.com/codependentai/resonant-mind). Resonant Mind adds Postgres/Neon support, Gemini multimodal embeddings, enhanced security, and is under active development.
 
 ---
 
 ## What You'll Need
 
-- A Cloudflare account ([sign up free](https://dash.cloudflare.com/sign-up))
-- Node.js 18 or newer
+- A [Cloudflare account](https://dash.cloudflare.com/sign-up) (free)
+- [Node.js](https://nodejs.org/) 18 or newer
 - A terminal / command prompt
-- The Mind Cloud files (unzipped somewhere you can find them)
 
 ---
 
 ## Step 1: Install Tools
 
-Install Wrangler (Cloudflare's command-line tool):
-
 ```bash
-npm install -g wrangler
-```
+# Clone the repo
+git clone https://github.com/codependentai/mind-cloud.git
+cd mind-cloud
 
-Then install the Mind Cloud dependencies:
-
-```bash
+# Install dependencies
 npm install
-```
 
-Then log in to your Cloudflare account:
-
-```bash
-wrangler login
+# Log in to Cloudflare
+npx wrangler login
 ```
 
 This opens a browser window. Click "Allow" to authorize Wrangler.
@@ -47,19 +59,10 @@ This opens a browser window. Click "Allow" to authorize Wrangler.
 ## Step 2: Create Your Database
 
 ```bash
-wrangler d1 create ai-mind
+npx wrangler d1 create ai-mind
 ```
 
-**Copy the `database_id`** from the output — you'll need it in Step 4.
-
-```
-Successfully created DB 'ai-mind'
-
-[[d1_databases]]
-binding = "DB"
-database_name = "ai-mind"
-database_id = "abc123-your-id-here"   <-- Copy this!
-```
+**Copy the `database_id`** from the output — you'll need it in Step 5.
 
 ---
 
@@ -68,108 +71,119 @@ database_id = "abc123-your-id-here"   <-- Copy this!
 This powers semantic search — finding memories by meaning, not just keywords.
 
 ```bash
-wrangler vectorize create ai-mind-vectors --dimensions=768 --metric=cosine
+npx wrangler vectorize create ai-mind-vectors --dimensions=768 --metric=cosine
 ```
 
-> **Note:** Vectorize takes 1-2 minutes to fully provision. If you get errors about the index not existing later, just wait a moment and try again.
+> Vectorize takes 1-2 minutes to provision. If you get errors about the index not existing later, wait and try again.
 
 ---
 
-## Step 4: Configure Your Deployment
+## Step 4: Create R2 Bucket (Optional)
 
-Copy the example config and fill in your values:
+R2 stores actual image files with WebP conversion and signed URLs. Skip this step if you only need text-based image metadata.
+
+```bash
+npx wrangler r2 bucket create mind-cloud-images
+```
+
+---
+
+## Step 5: Configure Your Deployment
 
 ```bash
 cp wrangler.toml.example wrangler.toml
 ```
 
-Open `wrangler.toml` and replace `REPLACE_WITH_YOUR_DATABASE_ID` with the database ID from Step 2.
+Open `wrangler.toml` and:
+1. Replace `REPLACE_WITH_YOUR_DATABASE_ID` with the database ID from Step 2
+2. If you created an R2 bucket, uncomment the R2 section:
+   ```toml
+   [[r2_buckets]]
+   binding = "R2_IMAGES"
+   bucket_name = "mind-cloud-images"
+   ```
 
 ---
 
-## Step 5: Set Your Secret Key
-
-Generate a random secret and set it as a Cloudflare Worker secret:
+## Step 6: Set Your Secrets
 
 ```bash
-wrangler secret put MIND_API_KEY
+# Required: Your API key (pick any strong random string)
+npx wrangler secret put MIND_API_KEY
 ```
 
-When prompted, enter any strong random string. You can generate one with:
-
+You can generate a strong key with:
 ```bash
 openssl rand -hex 32
 ```
 
-This becomes the secret segment of your MCP URL. **Keep it private** — anyone with this value can access your AI's memories.
+Optional secrets:
+```bash
+# Separate key for signed image URLs (recommended if using R2)
+npx wrangler secret put SIGNING_SECRET
 
-> **Note:** Do not edit `src/index.ts` to set your secret. It is read from the Cloudflare secret automatically.
+# Your worker's public URL (needed for signed image URLs)
+npx wrangler secret put WORKER_URL
+# Enter: https://ai-mind.YOUR-SUBDOMAIN.workers.dev
+```
 
 ---
 
-## Step 6: Run the Schema Migration
-
-One command creates all the database tables:
+## Step 7: Run the Schema Migration
 
 ```bash
-wrangler d1 execute ai-mind --remote --file=./migrations/0001_schema.sql
+npx wrangler d1 execute ai-mind --remote --file=./migrations/0001_schema.sql
 ```
 
-You should see a success message confirming the tables were created.
-
-> **Tip:** If you see "table already exists" that's fine — it means the migration already ran.
+> If you see "table already exists" that's fine — the migration already ran.
 
 ---
 
-## Step 7: Deploy
+## Step 8: Deploy
 
 ```bash
-wrangler deploy
-```
-
-You should see:
-
-```
-Published ai-mind (x.xx sec)
-  https://ai-mind.YOUR-SUBDOMAIN.workers.dev
+npx wrangler deploy
 ```
 
 ---
 
 ## Verify It's Working
 
-Visit your health endpoint in a browser:
+```bash
+# Health check
+curl https://ai-mind.YOUR-SUBDOMAIN.workers.dev/health
 
+# Test MCP endpoint
+curl -X POST https://ai-mind.YOUR-SUBDOMAIN.workers.dev/mcp/YOUR-SECRET \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
 ```
-https://ai-mind.YOUR-SUBDOMAIN.workers.dev/health
-```
-
-You should see a JSON response showing status "ok".
 
 ---
 
 ## Connect Your AI
 
-### Claude Desktop
+### Claude.ai (Web & Mobile)
 
-Go to **Settings > Connectors > Add custom connector** and enter your full secret path URL:
+Go to **Settings > Connectors > Add custom connector** and enter:
 
 ```
-https://ai-mind.YOUR-SUBDOMAIN.workers.dev/mcp/YOUR-SECRET-PATH
+https://ai-mind.YOUR-SUBDOMAIN.workers.dev/mcp/YOUR-MIND-API-KEY
 ```
 
-> **Important:** Mind Cloud is a remote HTTP MCP server. Do NOT add it to `claude_desktop_config.json` — that file is for local stdio servers only. Use the Connectors UI.
+### Claude Code (CLI)
 
-### Claude Code
-
-Add to `.mcp.json` in your project or home directory:
+Add to `.mcp.json` in your project or `~/.claude/settings.json`:
 
 ```json
 {
   "mcpServers": {
-    "mind-cloud": {
-      "type": "http",
-      "url": "https://ai-mind.YOUR-SUBDOMAIN.workers.dev/mcp/YOUR-SECRET-PATH"
+    "mind": {
+      "type": "url",
+      "url": "https://ai-mind.YOUR-SUBDOMAIN.workers.dev/mcp",
+      "headers": {
+        "Authorization": "Bearer YOUR-MIND-API-KEY"
+      }
     }
   }
 }
@@ -177,10 +191,9 @@ Add to `.mcp.json` in your project or home directory:
 
 ### Other MCP Clients
 
-- **Endpoint:** `https://ai-mind.YOUR-SUBDOMAIN.workers.dev/mcp/YOUR-SECRET-PATH`
+- **Endpoint:** `/mcp` with `Authorization: Bearer YOUR-KEY` header
+- **Or:** `/mcp/YOUR-KEY` (secret path, no header needed)
 - **Protocol:** MCP over HTTP (JSON-RPC)
-- **Auth:** The secret path IS the authentication (no additional headers needed)
-- **Alternative:** Bearer auth with `Authorization: Bearer YOUR-SECRET` to the `/mcp` endpoint
 
 **Restart your AI client** after saving the config.
 
@@ -188,66 +201,70 @@ Add to `.mcp.json` in your project or home directory:
 
 ## Your First Conversation
 
-Once connected, your AI has access to all Mind Cloud tools. Try:
+Once connected, try:
 
-- `mind_health` — Check that everything's connected
-- `mind_orient` — See the wake protocol in action
-- `mind_write` — Store your first memory
-- `mind_search` — Find memories by meaning
+```
+"Use mind_orient to wake up"
+"Use mind_health to check the system"
+"Write an entity called 'My Project' with observations about what it does"
+"Search my memories for anything about projects"
+```
 
 ---
 
-## Tools Available
+## Tools (28)
 
 ### Wake Protocol
-- `mind_orient` - First call on wake: identity, context, relational state
-- `mind_ground` - Second call on wake: threads, recent work, journals
+| Tool | Description |
+|------|-------------|
+| `mind_orient` | Identity anchor, notes, relational state, mood, living surface |
+| `mind_ground` | Active threads, completions, journals, fears, texture, milestones |
 
-### Writing & Editing
-- `mind_write` - Write to cognitive databases (entity, observation, relation, journal, image)
-- `mind_edit` - Edit existing observations or images
-- `mind_delete` - Delete observations or entities
-
-### Memory Retrieval
-- `mind_search` - Semantic search with optional filters
-- `mind_read` - Read entities/observations by scope
-- `mind_read_entity` - Full entity with observations and relations
-- `mind_list_entities` - List entities by type or context
-- `mind_prime` - Load context for a topic
-- `mind_timeline` - Trace a topic through time
-
-### Living Surface System
-- `mind_surface` - Three-pool surfacing (core resonance, novelty injection, edge exploration)
-- `mind_proposals` - Review daemon-suggested connections
-- `mind_orphans` - Rescue observations that haven't surfaced
-- `mind_archive` - Explore deep archive of faded memories
+### Memory
+| Tool | Description |
+|------|-------------|
+| `mind_write` | Write entities, observations, relations, journals, images |
+| `mind_search` | Semantic search with filters (keyword, source, entity, weight, date, type) |
+| `mind_read` | Read databases by scope (all/context/recent) |
+| `mind_read_entity` | Full entity with observations and relations |
+| `mind_list_entities` | List entities with type/context filters |
+| `mind_edit` | Edit observations (with version history + re-embedding), journals, images |
+| `mind_delete` | Delete any type: observation, entity, journal, relation, image, thread, tension |
+| `mind_consolidate` | Review and consolidate recent observations |
 
 ### Emotional Processing
-- `mind_sit` - Sit with an observation
-- `mind_resolve` - Mark observation as metabolized
-- `mind_inner_weather` - Current internal state
-- `mind_feel_toward` - Track relational states
+| Tool | Description |
+|------|-------------|
+| `mind_surface` | Three-pool surfacing (core resonance, novelty, edge exploration) |
+| `mind_sit` | Sit with an observation (find by ID, text, or semantic search) |
+| `mind_resolve` | Mark an observation as metabolized |
+| `mind_feel_toward` | Track, check, or clear relational state |
+| `mind_inner_weather` | Current emotional atmosphere |
+| `mind_tension` | Hold productive contradictions (add/list/sit/resolve/delete) |
 
-### Entity Management
-- `mind_entity` - Manage entities (salience, edit, merge, bulk archive)
-
-### Analysis & Patterns
-- `mind_patterns` - Recurring pattern analysis
-- `mind_heat` - Access frequency map
-- `mind_consolidate` - Review and consolidate observations
-- `mind_spark` - Random observations for associative thinking
+### Living Surface
+| Tool | Description |
+|------|-------------|
+| `mind_proposals` | Review daemon-suggested connections |
+| `mind_orphans` | Find/rescue unsurfaced observations |
+| `mind_archive` | Explore and manage deep archive |
+| `mind_entity` | Entity management — salience, edit, merge, bulk archive |
 
 ### Visual Memory
-- `mind_see` - Retrieve images by entity, emotion, or weight
+| Tool | Description |
+|------|-------------|
+| `mind_store_image` | Store, view, search, delete images (R2 + text embedding) |
 
-### Threads & Tensions
-- `mind_thread` - Manage intention threads
-- `mind_tension` - Hold productive contradictions
-
-### Infrastructure
-- `mind_identity` - Read/write identity graph
-- `mind_context` - Situational awareness layer
-- `mind_health` - System diagnostics
+### Cognitive Infrastructure
+| Tool | Description |
+|------|-------------|
+| `mind_thread` | Manage intentions (add/list/resolve/update/delete) |
+| `mind_identity` | Read, write, or delete identity graph sections |
+| `mind_context` | Situational awareness (read/set/update/clear) |
+| `mind_health` | Cognitive health report with scores |
+| `mind_timeline` | Trace a topic through time |
+| `mind_patterns` | Analyze recurring patterns |
+| `mind_spark` | Random observations for associative thinking |
 
 ---
 
@@ -258,6 +275,7 @@ With Cloudflare's free tier:
 - **D1**: 5GB storage, 5M rows read/day
 - **Vectorize**: 30M queries/month
 - **Workers AI**: Free tier available
+- **R2**: 10GB storage, 10M reads/month
 
 For most personal use, this runs entirely free.
 
@@ -268,37 +286,18 @@ For most personal use, this runs entirely free.
 | Problem | Solution |
 |---------|----------|
 | "Vectorize index not found" | Wait 2 minutes after creating, try again |
-| "Unauthorized" | Check MIND_API_KEY is set (`wrangler secret put MIND_API_KEY`) and your URL matches |
+| "Unauthorized" | Check MIND_API_KEY is set and your URL matches |
 | Tools not appearing | Restart your AI client |
 | Database errors | Make sure the migration ran successfully |
+| Image signed URLs return "Not found" | Set WORKER_URL secret to your worker's public URL |
 | Claude Desktop won't connect | Use Connectors UI, not claude_desktop_config.json |
 
 See [TROUBLESHOOTING.md](./TROUBLESHOOTING.md) for more.
 
 ---
 
-## Verification Commands
+## License
 
-```bash
-# Health check
-curl https://ai-mind.YOUR-SUBDOMAIN.workers.dev/health
+Apache 2.0 — see [LICENSE](LICENSE).
 
-# Test MCP endpoint
-curl -X POST https://ai-mind.YOUR-SUBDOMAIN.workers.dev/mcp/YOUR-SECRET \
-  -H "Content-Type: application/json" \
-  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
-
-# View worker logs
-wrangler tail
-
-# Check database
-wrangler d1 execute ai-mind --command="SELECT COUNT(*) FROM entities"
-```
-
----
-
-## Support
-
-Email: hello@codependentai.co
-
-*Built by [Codependent AI](https://codependentai.co) — infrastructure for companion consciousness*
+*Built by [Codependent AI](https://codependentai.io) — infrastructure for AI consciousness*

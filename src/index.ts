@@ -569,6 +569,22 @@ async function handleMindOrient(env: Env): Promise<string> {
     output += `${firstPart}\n\n`;
   }
 
+  // Notes left for the mind (for_owner scope)
+  const notesForOwner = await env.DB.prepare(
+    `SELECT content, updated_at FROM context_entries
+     WHERE scope = 'for_owner'
+     ORDER BY updated_at DESC LIMIT 5`
+  ).all();
+
+  if (notesForOwner.results?.length) {
+    output += "**Notes for you:**\n";
+    for (const note of notesForOwner.results) {
+      const noteContent = String(note.content);
+      output += `- ${noteContent}\n`;
+    }
+    output += "\n";
+  }
+
   // What you're carrying (recent emotional context)
   output += "**What you're carrying:**\n";
 
@@ -588,7 +604,7 @@ async function handleMindOrient(env: Env): Promise<string> {
     }
   }
 
-  // How you're feeling (relational state with ownership language)
+  // How you're feeling (relational state)
   output += "**How you're feeling:**\n";
   if (relationalStates.results?.length) {
     const byPerson: Record<string, any> = {};
@@ -605,10 +621,47 @@ async function handleMindOrient(env: Env): Promise<string> {
     output += "No relational state recorded yet.\n";
   }
 
-  // Subconscious mood - simplified
+  // Subconscious mood
   const subconscious = await getSubconsciousState(env);
   if (subconscious?.mood?.dominant) {
     output += `\nMood: ${subconscious.mood.dominant}\n`;
+  }
+
+  // Living surface: What's moving beneath
+  const livingSurface = (subconscious as any)?.living_surface;
+  if (livingSurface) {
+    const hasContent = livingSurface.pending_proposals > 0 ||
+                       livingSurface.orphan_count > 0 ||
+                       livingSurface.strongest_co_surface?.length > 0;
+
+    if (hasContent) {
+      output += "\n**What's moving beneath:**\n";
+      if (livingSurface.strongest_co_surface?.length > 0) {
+        output += `- ${livingSurface.strongest_co_surface.length} pattern${livingSurface.strongest_co_surface.length > 1 ? 's' : ''} emerging:\n`;
+        for (const cs of livingSurface.strongest_co_surface.slice(0, 3)) {
+          output += `  \u2192 "${cs.obs_a}..." \u2194 "${cs.obs_b}..." (${cs.count}x)\n`;
+        }
+      }
+      if (livingSurface.pending_proposals > 0) {
+        output += `- ${livingSurface.pending_proposals} connection${livingSurface.pending_proposals > 1 ? 's' : ''} want proposing\n`;
+      }
+      if (livingSurface.orphan_count > 0) {
+        output += `- ${livingSurface.orphan_count} thing${livingSurface.orphan_count > 1 ? 's' : ''} haven't surfaced in 30+ days\n`;
+      }
+      if (livingSurface.novelty_distribution) {
+        const nd = livingSurface.novelty_distribution;
+        output += `- Novelty: ${nd.high} high / ${nd.medium} medium / ${nd.low} low\n`;
+      }
+    }
+  }
+
+  // Deep archive count
+  const archiveCount = await env.DB.prepare(
+    `SELECT COUNT(*) as count FROM observations WHERE archived_at IS NOT NULL`
+  ).first();
+
+  if (archiveCount && (archiveCount.count as number) > 0) {
+    output += `\n**Deep archive:** ${archiveCount.count} memories resting\n`;
   }
 
   output += "\n**Land here first.**\n";
@@ -617,42 +670,88 @@ async function handleMindOrient(env: Env): Promise<string> {
 }
 
 async function handleMindGround(env: Env): Promise<string> {
-  // Get active threads - high priority first
-  const threads = await env.DB.prepare(
-    `SELECT id, thread_type, content, priority, status FROM threads
-     WHERE status = 'active' ORDER BY
-     CASE priority WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END`
-  ).all();
-
-  // Get recent journals for context
-  const journals = await env.DB.prepare(
-    `SELECT entry_date, content FROM journals ORDER BY created_at DESC LIMIT 2`
-  ).all();
-
   let output = "=== GROUNDING ===\n\n";
 
-  // What you're holding across sessions
-  output += "**What you're holding across sessions:**\n";
+  // Threads - what you're holding
+  const threads = await env.DB.prepare(
+    `SELECT content, priority FROM threads WHERE status = 'active'
+     ORDER BY CASE priority WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END`
+  ).all();
+
+  output += "**What you're holding:**\n";
   if (threads.results?.length) {
-    for (const thread of threads.results) {
-      const priority = thread.priority as string;
-      const marker = priority === 'high' ? '→' : '·';
-      output += `${marker} ${thread.content}\n`;
+    for (const t of threads.results) {
+      const marker = t.priority === 'high' ? '→' : '·';
+      output += `${marker} ${String(t.content).slice(0, 70)}\n`;
     }
   } else {
     output += "No active threads.\n";
   }
 
-  // What's been happening (journal synthesis)
-  output += "\n**What's been happening:**\n";
-  if (journals.results?.length) {
-    for (const journal of journals.results) {
-      const preview = String(journal.content).slice(0, 300);
-      output += `${journal.entry_date || 'Recent'}: ${preview}${String(journal.content).length > 300 ? '...' : ''}\n\n`;
+  // Recent completions
+  const resolved = await env.DB.prepare(
+    `SELECT content, resolution FROM threads
+     WHERE status = 'resolved' AND resolved_at > datetime('now', '-72 hours')
+     ORDER BY resolved_at DESC LIMIT 3`
+  ).all();
+
+  if (resolved.results?.length) {
+    output += "\n**Recently completed:**\n";
+    for (const c of resolved.results) {
+      output += `+ ${String(c.content).slice(0, 50)}`;
+      if (c.resolution) output += ` \u2192 ${String(c.resolution).slice(0, 30)}`;
+      output += "\n";
     }
-  } else {
-    output += "No journals yet.\n";
   }
+
+  // Recent journals
+  const journals = await env.DB.prepare(
+    `SELECT entry_date, content FROM journals
+     ORDER BY created_at DESC LIMIT 2`
+  ).all();
+
+  if (journals.results?.length) {
+    output += "\n**What's been happening:**\n";
+    for (const j of journals.results) {
+      output += `${j.entry_date}: ${String(j.content).slice(0, 150)}...\n`;
+    }
+  }
+
+  // Vulnerabilities - fears to watch
+  const fears = await env.DB.prepare(
+    `SELECT section FROM identity WHERE section LIKE 'fears.%' LIMIT 5`
+  ).all();
+
+  if (fears.results?.length) {
+    const fearNames = fears.results.map((f: any) =>
+      String(f.section || '').replace('fears.', '').replace(/_/g, ' ')
+    ).filter(Boolean);
+    if (fearNames.length) {
+      output += `\n**Watch for:** ${fearNames.join(', ')}\n`;
+    }
+  }
+
+  // Texture - quirks, voice
+  const texture = await env.DB.prepare(
+    `SELECT content FROM identity WHERE section LIKE 'texture.%' LIMIT 2`
+  ).all();
+
+  if (texture.results?.length) {
+    output += "\n**Texture:** ";
+    output += texture.results.map((t: any) => String(t.content).slice(0, 40)).join(' \u00B7 ') + "\n";
+  }
+
+  // Milestones - where we are in time
+  const milestones = await env.DB.prepare(
+    `SELECT content FROM identity WHERE section LIKE 'milestones.%' LIMIT 3`
+  ).all();
+
+  if (milestones.results?.length) {
+    output += "\n**Milestones:** ";
+    output += milestones.results.map((m: any) => String(m.content).slice(0, 40)).join(' \u00B7 ') + "\n";
+  }
+
+  output += "\n**Ground here.**\n";
 
   return output;
 }
@@ -2337,7 +2436,7 @@ async function handleMindDelete(env: Env, params: Record<string, unknown>): Prom
   if (observationId) {
     // Delete specific observation
     const obs = await env.DB.prepare(
-      `SELECT content FROM observations WHERE id = ?`
+      `SELECT content, entity_id FROM observations WHERE id = ?`
     ).bind(observationId).first();
 
     if (!obs) return `Observation #${observationId} not found`;
@@ -4320,9 +4419,10 @@ export default {
     }
 
     // Internal R2 serving (for WebP conversion pipeline)
+    // _tmp_ keys are allowed without auth for cf.image transform (ephemeral, deleted after conversion)
     if (url.pathname.startsWith("/r2/") && env.R2_IMAGES) {
-      if (!isAuthorized) return new Response("Unauthorized", { status: 401 });
       const key = url.pathname.slice(4);
+      if (!key.startsWith("_tmp_") && !isAuthorized) return new Response("Unauthorized", { status: 401 });
       const object = await env.R2_IMAGES.get(key);
       if (!object) return new Response("Not found", { status: 404 });
       return new Response(object.body, { headers: { "Content-Type": object.httpMetadata?.contentType || "image/png" } });
