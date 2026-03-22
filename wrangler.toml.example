@@ -1,0 +1,26 @@
+# Mind Cloud - Wrangler Configuration
+# Copy this to wrangler.toml and fill in your values
+
+name = "ai-mind"
+main = "src/index.ts"
+compatibility_date = "2024-01-01"
+compatibility_flags = ["nodejs_compat"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "ai-mind"
+# Get this from: wrangler d1 create ai-mind
+database_id = "REPLACE_WITH_YOUR_DATABASE_ID"
+
+[[vectorize]]
+binding = "VECTORS"
+# Create with: wrangler vectorize create ai-mind-vectors --dimensions=768 --metric=cosine
+index_name = "ai-mind-vectors"
+
+[ai]
+binding = "AI"
+
+# Subconscious processing runs on a schedule
+# Every 6 hours by default
+[triggers]
+crons = ["0 */6 * * *"]
