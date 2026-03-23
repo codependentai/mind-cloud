@@ -45,9 +45,13 @@ All notable changes to Mind Cloud.
 - **Orient living surface data** — Daemon was storing `orphan_observations` but orient expected `orphan_count`. Added missing `strongest_co_surface` and `novelty_distribution` computations to daemon state.
 - **Orient/Ground quality** — Ported full orient (notes for owner, living surface, deep archive count) and ground (recently completed threads, fears, texture, milestones) from Resonant Mind.
 
-### No Migration Required
+### Optional Migration
 
-Code-only update. Replace `src/index.ts` and redeploy. Optionally add R2 bucket binding for image storage.
+- `0002_cleanup_fragmented_observations.sql` — Removes single-letter observations caused by a v2.0.0 bug where observation arrays were iterated character-by-character (fixed in v2.2.1, but fragmented data persists). Run the SELECT preview first to review what will be deleted.
+
+```bash
+npx wrangler d1 execute YOUR_DB --remote --file=migrations/0002_cleanup_fragmented_observations.sql
+```
 
 ---
 
