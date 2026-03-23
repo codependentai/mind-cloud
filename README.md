@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/banner.png" alt="Mind Cloud" width="720" />
+  <img src="assets/banner.jpg" alt="Mind Cloud" width="720" />
 </p>
 
 <p align="center">
