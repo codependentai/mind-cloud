@@ -45,12 +45,21 @@ All notable changes to Mind Cloud.
 - **Orient living surface data** — Daemon was storing `orphan_observations` but orient expected `orphan_count`. Added missing `strongest_co_surface` and `novelty_distribution` computations to daemon state.
 - **Orient/Ground quality** — Ported full orient (notes for owner, living surface, deep archive count) and ground (recently completed threads, fears, texture, milestones) from Resonant Mind.
 
-### Optional Migration
+### Optional: Restore Fragmented Observations
 
-- `0002_cleanup_fragmented_observations.sql` — Removes single-letter observations caused by a v2.0.0 bug where observation arrays were iterated character-by-character (fixed in v2.2.1, but fragmented data persists). Run the SELECT preview first to review what will be deleted.
+A v2.0.0 bug iterated observation arrays character-by-character, turning "I love this project" into single-letter observations. Fixed in v2.2.1, but fragmented data persists. The restoration script reconstructs the original text from sequential single-character runs.
 
 ```bash
-npx wrangler d1 execute YOUR_DB --remote --file=migrations/0002_cleanup_fragmented_observations.sql
+# 1. Export fragments
+npx wrangler d1 execute YOUR_DB --remote \
+  --command "SELECT id, entity_id, content, added_at FROM observations WHERE LENGTH(TRIM(content)) <= 1 ORDER BY entity_id, id" \
+  --json > fragments.json
+
+# 2. Generate restoration SQL (preview first)
+node scripts/restore-fragmented.js fragments.json
+
+# 3. Review restore-output.sql, then apply
+npx wrangler d1 execute YOUR_DB --remote --file=restore-output.sql
 ```
 
 ---

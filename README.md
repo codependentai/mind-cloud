@@ -290,7 +290,7 @@ For most personal use, this runs entirely free.
 | Tools not appearing | Restart your AI client |
 | Database errors | Make sure the migration ran successfully |
 | Image signed URLs return "Not found" | Set WORKER_URL secret to your worker's public URL |
-| Single-letter observations surfacing | Run `migrations/0002_cleanup_fragmented_observations.sql` — v2.0.0 bug, fixed in v2.2.1 but data persists |
+| Single-letter observations surfacing | Run `node scripts/restore-fragmented.js` — reconstructs original text from v2.0.0 character fragmentation bug |
 | Claude Desktop won't connect | Use Connectors UI, not claude_desktop_config.json |
 
 See [TROUBLESHOOTING.md](./TROUBLESHOOTING.md) for more.
