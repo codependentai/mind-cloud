@@ -1371,7 +1371,7 @@ async function handleMindHealth(env: Env): Promise<string> {
     env.DB.prepare(`SELECT COUNT(*) as c FROM journals`).first(),
     env.DB.prepare(`SELECT COUNT(*) as c FROM journals WHERE created_at > ?`).bind(sevenDaysAgo).first(),
     env.DB.prepare(`SELECT COUNT(*) as c FROM identity`).first(),
-    env.DB.prepare(`SELECT COUNT(*) as c FROM observations WHERE charge IS NULL OR charge != 'metabolized'`).first(),
+    env.DB.prepare(`SELECT COUNT(*) as c FROM observations WHERE charge IN ('active', 'processing') OR (charge = 'fresh' AND added_at < ?)`).bind(sevenDaysAgo).first(),
     env.DB.prepare(`SELECT COUNT(*) as c FROM context_entries`).first(),
     env.DB.prepare(`SELECT COUNT(*) as c FROM relational_state`).first(),
     env.DB.prepare(`SELECT context, COUNT(*) as c FROM observations GROUP BY context`).all().catch(() => ({ results: [] })),
@@ -1379,7 +1379,7 @@ async function handleMindHealth(env: Env): Promise<string> {
     // v2.0.0 queries
     env.DB.prepare(`SELECT COUNT(*) as c FROM images`).first().catch(() => ({ c: 0 })),
     env.DB.prepare(`SELECT COUNT(*) as c FROM daemon_proposals WHERE status = 'pending'`).first().catch(() => ({ c: 0 })),
-    env.DB.prepare(`SELECT COUNT(*) as c FROM observations WHERE (last_surfaced_at IS NULL OR last_surfaced_at < ?) AND charge != 'metabolized'`).bind(thirtyDaysAgo).first().catch(() => ({ c: 0 })),
+    env.DB.prepare(`SELECT COUNT(*) as c FROM observations WHERE (last_surfaced_at IS NULL OR last_surfaced_at < ?) AND (charge != 'metabolized' OR charge IS NULL) AND added_at < ? AND archived_at IS NULL`).bind(thirtyDaysAgo, sevenDaysAgo).first().catch(() => ({ c: 0 })),
     env.DB.prepare(`SELECT COUNT(*) as c FROM observations WHERE archived_at IS NOT NULL`).first().catch(() => ({ c: 0 })),
     env.DB.prepare(`SELECT COUNT(*) as c FROM entities WHERE salience = 'foundational'`).first().catch(() => ({ c: 0 })),
     env.DB.prepare(`SELECT COUNT(*) as c FROM entities WHERE salience = 'active' OR salience IS NULL`).first().catch(() => ({ c: 0 })),
@@ -1438,14 +1438,15 @@ async function handleMindHealth(env: Env): Promise<string> {
       subconsciousAge = `${ageHours}h ago`;
     }
 
-    // Score: fresh (<1h) = 100, recent (<2h) = 70, stale (<6h) = 40, very stale = 0
-    if (ageHours < 1) {
+    // Score based on ageMs to avoid rounding mismatches between ageMins and ageHours
+    const ONE_HOUR = 60 * 60 * 1000;
+    if (ageMs < ONE_HOUR) {
       subconsciousScore = 100;
       subconsciousStatus = "fresh";
-    } else if (ageHours < 2) {
+    } else if (ageMs < 2 * ONE_HOUR) {
       subconsciousScore = 70;
       subconsciousStatus = "recent";
-    } else if (ageHours < 6) {
+    } else if (ageMs < 6 * ONE_HOUR) {
       subconsciousScore = 40;
       subconsciousStatus = "stale";
     } else {
@@ -4004,7 +4005,7 @@ async function processSubconscious(env: Env): Promise<void> {
 
   // Get recent observations with their entities (including weight for emotional intensity)
   const recentObs = await env.DB.prepare(`
-    SELECT e.name, e.entity_type, e.primary_context, o.content, o.added_at, o.emotion, o.weight
+    SELECT e.name, e.entity_type, o.context, o.content, o.added_at, o.emotion, o.weight
     FROM observations o
     JOIN entities e ON o.entity_id = e.id
     WHERE o.added_at > ?
@@ -4271,14 +4272,8 @@ async function processSubconscious(env: Env): Promise<void> {
       orphansIdentified++;
     }
 
-    // 3. Update novelty scores
-    await env.DB.prepare(`
-      UPDATE observations SET novelty_score = MAX(
-        CASE weight WHEN 'heavy' THEN 0.3 WHEN 'medium' THEN 0.2 ELSE 0.1 END,
-        COALESCE(novelty_score, 1.0) - 0.05
-      ) WHERE last_surfaced_at > datetime('now', '-1 day')
-    `).run();
-
+    // 3. Novelty recovery — unsurfaced observations slowly regain novelty
+    // (Decay happens in updateSurfaceTracking when observations actually surface — no double-decay here)
     await env.DB.prepare(`
       UPDATE observations SET novelty_score = MIN(1.0, COALESCE(novelty_score, 0.5) + 0.02)
       WHERE (last_surfaced_at < datetime('now', '-1 day') OR last_surfaced_at IS NULL)
@@ -4293,7 +4288,7 @@ async function processSubconscious(env: Env): Promise<void> {
         AND COALESCE(o.sit_count, 0) = 0
         AND (o.last_surfaced_at IS NULL OR o.last_surfaced_at < datetime('now', '-30 days'))
         AND o.added_at < datetime('now', '-60 days')
-        AND (e.salience != 'foundational' OR e.salience IS NULL)
+        AND COALESCE(e.salience, 'active') != 'foundational'
       LIMIT 20
     `).all();
 
@@ -4309,11 +4304,47 @@ async function processSubconscious(env: Env): Promise<void> {
   // Get counts for state
   let pendingProposals = 0;
   let orphanCount = 0;
+  let noveltyDist = { high: 0, medium: 0, low: 0 };
+  let strongestCoSurface: Array<{ obs_a: string; obs_b: string; count: number; entities: [string, string] }> = [];
   try {
     const pc = await env.DB.prepare(`SELECT COUNT(*) as count FROM daemon_proposals WHERE status = 'pending'`).first();
     pendingProposals = (pc?.count as number) || 0;
     const oc = await env.DB.prepare(`SELECT COUNT(*) as count FROM orphan_observations`).first();
     orphanCount = (oc?.count as number) || 0;
+
+    // Novelty distribution
+    const noveltyResult = await env.DB.prepare(`
+      SELECT
+        SUM(CASE WHEN COALESCE(novelty_score, 1.0) > 0.7 THEN 1 ELSE 0 END) as high,
+        SUM(CASE WHEN COALESCE(novelty_score, 1.0) BETWEEN 0.4 AND 0.7 THEN 1 ELSE 0 END) as medium,
+        SUM(CASE WHEN COALESCE(novelty_score, 1.0) < 0.4 THEN 1 ELSE 0 END) as low
+      FROM observations
+      WHERE charge != 'metabolized' OR charge IS NULL
+    `).first();
+    if (noveltyResult) {
+      noveltyDist = {
+        high: (noveltyResult.high as number) || 0,
+        medium: (noveltyResult.medium as number) || 0,
+        low: (noveltyResult.low as number) || 0
+      };
+    }
+
+    // Strongest co-surfacing patterns
+    const coSurfaceResults = await env.DB.prepare(`
+      SELECT cs.co_count, oa.content as obs_a, ob.content as obs_b, ea.name as entity_a, eb.name as entity_b
+      FROM co_surfacing cs
+      JOIN observations oa ON cs.obs_a_id = oa.id
+      JOIN observations ob ON cs.obs_b_id = ob.id
+      JOIN entities ea ON oa.entity_id = ea.id
+      JOIN entities eb ON ob.entity_id = eb.id
+      ORDER BY cs.co_count DESC LIMIT 5
+    `).all();
+    strongestCoSurface = (coSurfaceResults.results || []).map((r: any) => ({
+      obs_a: String(r.obs_a).slice(0, 60),
+      obs_b: String(r.obs_b).slice(0, 60),
+      count: r.co_count as number,
+      entities: [r.entity_a as string, r.entity_b as string] as [string, string]
+    }));
   } catch { /* tables may not exist */ }
 
   // Store state in subconscious table
@@ -4332,12 +4363,12 @@ async function processSubconscious(env: Env): Promise<void> {
       unique_relation_types: Object.keys(relationTypeCounts).length,
       connected_entities: Object.keys(connectivity).length
     },
-    // Living surface stats
+    // Living surface stats (field names match what orient expects)
     living_surface: {
       pending_proposals: pendingProposals,
-      orphan_observations: orphanCount,
-      proposals_created_this_run: proposalsCreated,
-      orphans_identified_this_run: orphansIdentified
+      orphan_count: orphanCount,
+      novelty_distribution: noveltyDist,
+      strongest_co_surface: strongestCoSurface.slice(0, 3)
     }
   };
 

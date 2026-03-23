@@ -34,6 +34,17 @@ All notable changes to Mind Cloud.
 - **mind_heat** — Data available via `mind_inner_weather` and `mind_patterns`.
 - **mind_see** — Replaced by `mind_store_image(action='view')`.
 
+### Fixed
+
+- **Subconscious daemon context clustering** — Was reading undefined `row.context` instead of observation's `o.context`. Every daemon run produced a single meaningless cluster. Now correctly groups entities by observation context.
+- **Health "unprocessed" count inflated** — Was counting ALL non-metabolized observations including brand new ones. Now only counts observations actively needing attention (active/processing charge, or fresh for 7+ days).
+- **Health orphan count inflated** — Was counting every observation that hadn't surfaced yet, including ones written yesterday. Now requires 7+ days age before counting as orphan (matches daemon logic).
+- **Subconscious health score rounding** — Narrow window (30-60 min) where display showed "35m ago" but score dropped to 70 instead of 100. Fixed by using millisecond comparison instead of rounded hours.
+- **Archive condition on null salience** — Observations on entities with null salience were incorrectly treated as archivable. Now treats null as 'active' (the schema default), protecting them.
+- **Double novelty decay** — Surface handler decayed novelty by 0.1, then daemon decayed another 0.05 within 24h. Removed daemon decay — only surface handler decays on actual surfacing. Daemon now only handles recovery.
+- **Orient living surface data** — Daemon was storing `orphan_observations` but orient expected `orphan_count`. Added missing `strongest_co_surface` and `novelty_distribution` computations to daemon state.
+- **Orient/Ground quality** — Ported full orient (notes for owner, living surface, deep archive count) and ground (recently completed threads, fears, texture, milestones) from Resonant Mind.
+
 ### No Migration Required
 
 Code-only update. Replace `src/index.ts` and redeploy. Optionally add R2 bucket binding for image storage.
