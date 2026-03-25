@@ -6,6 +6,17 @@ All notable changes to Mind Cloud.
 
 ---
 
+## [2.4.1] - 2026-03-25
+
+### Fixed
+
+- **Idempotent novelty recalculation** — Novelty is now a deterministic function of surface history, not an increment that accumulates per daemon run. Fixes broken recovery-outpaces-decay ratio. Uses D1-native `MAX`/`MIN`/`julianday()` math.
+- **Dormant rotation pool** — Surfacing now pulls 20% from entities that haven't had observations surfaced in 14+ days. Breaks feedback loop where only recently-active entities get surfaced. Pool ratios changed from 70/20/10 to 50/20/20/10 (core/novelty/dormant/edge).
+- **Automatic charge progression** — Daemon advances `fresh` to `active` after 2 surfaces, `active` to `processing` after 5 surfaces or 30 days with 2+ sits. Metabolization remains manual.
+- **Fresher mood calculation** — Mood now draws from observation emotions, journal emotions, and relational state. Last 6 hours weighted 2x. Reports "insufficient data" instead of false "neutral" when signals are sparse.
+
+---
+
 ## [2.4.0] - 2026-03-22
 
 ### Major: Tool Upgrades + R2 Image Storage

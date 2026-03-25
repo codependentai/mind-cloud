@@ -3,7 +3,14 @@
  * Persistent memory infrastructure accessible from anywhere
  */
 
-const AI_MIND_VERSION = "2.4.0";
+const AI_MIND_VERSION = "2.4.1";
+
+// Surface pool configuration
+const SURFACE_POOL_RATIOS = { core: 0.5, novelty: 0.2, dormant: 0.2, edge: 0.1 };
+const NOVELTY_FLOORS = { heavy: 0.3, medium: 0.2, light: 0.1 };
+const NOVELTY_DECAY_RATES = { heavy: 0.08, medium: 0.12, light: 0.15 };
+const NOVELTY_TIME_RECOVERY_RATE = 0.01;
+const NOVELTY_TIME_RECOVERY_CAP = 0.3;
 
 function normalizeText(text: string | null | undefined): string | null {
   if (!text) return null;
@@ -1933,6 +1940,41 @@ async function getNoveltyPool(env: Env, count: number, includeMetabolized: boole
   }
 }
 
+// Get the dormant pool - observations from entities that haven't had anything surfaced in 14+ days
+async function getDormantPool(env: Env, count: number, includeMetabolized: boolean): Promise<any[]> {
+  const chargeFilter = includeMetabolized
+    ? "o.archived_at IS NULL"
+    : "(o.charge != 'metabolized' OR o.charge IS NULL) AND o.archived_at IS NULL";
+
+  try {
+    const results = await env.DB.prepare(`
+      SELECT o.id, o.content, o.weight, o.charge, o.sit_count, o.emotion, o.added_at,
+             o.resolution_note, o.novelty_score, o.last_surfaced_at, o.surface_count,
+             o.certainty, o.source,
+             e.name as entity_name, e.entity_type
+      FROM observations o
+      JOIN entities e ON o.entity_id = e.id
+      WHERE ${chargeFilter}
+        AND e.id IN (
+          SELECT e2.id FROM entities e2
+          LEFT JOIN (
+            SELECT entity_id, MAX(last_surfaced_at) as latest_surface
+            FROM observations
+            WHERE last_surfaced_at IS NOT NULL
+            GROUP BY entity_id
+          ) surf ON e2.id = surf.entity_id
+          WHERE surf.latest_surface IS NULL
+             OR surf.latest_surface < datetime('now', '-14 days')
+        )
+      ORDER BY RANDOM()
+      LIMIT ?
+    `).bind(count).all();
+    return results.results || [];
+  } catch {
+    return [];
+  }
+}
+
 // Build resonance query from mood and context
 function buildResonanceQuery(query: string | undefined, mood: string | undefined, hotEntities: any[]): { resonanceQuery: string; moodContext: string } {
   let resonanceQuery = "";
@@ -1977,12 +2019,13 @@ async function handleMindSurface(env: Env, params: Record<string, unknown>): Pro
     return await handleMindSurfaceFallback(env, includeMetabolized, limit);
   }
 
-  // === THE THREE POOLS ===
-  // 70% core resonance, 20% novelty injection, 10% edge exploration
+  // === THE FOUR POOLS ===
+  // 50% core resonance, 20% novelty, 20% dormant rotation, 10% edge
 
-  const coreLimit = Math.ceil(limit * 0.7);
-  const noveltyLimit = Math.ceil(limit * 0.2);
-  const edgeLimit = Math.max(1, limit - coreLimit - noveltyLimit);
+  const coreLimit = Math.ceil(limit * SURFACE_POOL_RATIOS.core);
+  const noveltyLimit = Math.ceil(limit * SURFACE_POOL_RATIOS.novelty);
+  const dormantLimit = Math.ceil(limit * SURFACE_POOL_RATIOS.dormant);
+  const edgeLimit = Math.max(1, limit - coreLimit - noveltyLimit - dormantLimit);
 
   // Get embedding for resonance query
   const embedding = await getEmbedding(env.AI, resonanceQuery);
@@ -2043,6 +2086,14 @@ async function handleMindSurface(env: Env, params: Record<string, unknown>): Pro
   for (const obs of noveltyObs) {
     if (!obsScoreMap[obs.id]) {
       obsScoreMap[obs.id] = { score: obs.current_novelty || 0.8, pool: 'novelty' };
+    }
+  }
+
+  // Pool 4: Dormant rotation - observations from entities that haven't surfaced in 14+ days
+  const dormantObs = await getDormantPool(env, dormantLimit, includeMetabolized);
+  for (const obs of dormantObs) {
+    if (!obsScoreMap[obs.id]) {
+      obsScoreMap[obs.id] = { score: 0.7, pool: 'dormant' };
     }
   }
 
@@ -2145,7 +2196,7 @@ async function handleMindSurface(env: Env, params: Record<string, unknown>): Pro
 
   // Ensure mix from different pools - don't let one pool dominate completely
   const finalResults: any[] = [];
-  const byPool = { core: [] as any[], edge: [] as any[], novelty: [] as any[] };
+  const byPool = { core: [] as any[], edge: [] as any[], novelty: [] as any[], dormant: [] as any[] };
 
   for (const item of weightedResults) {
     byPool[item.pool as keyof typeof byPool]?.push(item);
@@ -2160,10 +2211,11 @@ async function handleMindSurface(env: Env, params: Record<string, unknown>): Pro
 
   takeFromPool(byPool.core, coreLimit);
   takeFromPool(byPool.novelty, noveltyLimit);
+  takeFromPool(byPool.dormant, dormantLimit);
   takeFromPool(byPool.edge, edgeLimit);
 
   // Fill remaining slots with best available
-  const remaining = [...byPool.core, ...byPool.novelty, ...byPool.edge]
+  const remaining = [...byPool.core, ...byPool.novelty, ...byPool.dormant, ...byPool.edge]
     .sort((a, b) => (b.resonanceScore || 0) - (a.resonanceScore || 0));
   while (finalResults.length < limit && remaining.length > 0) {
     finalResults.push(remaining.shift()!);
@@ -2188,7 +2240,7 @@ async function handleMindSurface(env: Env, params: Record<string, unknown>): Pro
   }
 
   // === FORMAT OUTPUT ===
-  const poolCounts = { core: 0, edge: 0, novelty: 0 };
+  const poolCounts = { core: 0, edge: 0, novelty: 0, dormant: 0 };
   const typeCounts = { observation: 0, image: 0 };
   for (const item of limitedResults) {
     poolCounts[item.pool as keyof typeof poolCounts]++;
@@ -2196,7 +2248,7 @@ async function handleMindSurface(env: Env, params: Record<string, unknown>): Pro
   }
 
   let output = `## What's Surfacing\n\n*${moodContext}*\n`;
-  output += `*Mix: ${poolCounts.core} resonance, ${poolCounts.novelty} novelty, ${poolCounts.edge} edge`;
+  output += `*Mix: ${poolCounts.core} resonance, ${poolCounts.novelty} novelty, ${poolCounts.dormant} dormant, ${poolCounts.edge} edge`;
   if (typeCounts.image > 0) {
     output += ` | ${typeCounts.observation} observations, ${typeCounts.image} images`;
   }
@@ -2207,7 +2259,7 @@ async function handleMindSurface(env: Env, params: Record<string, unknown>): Pro
     const emotionTag = item.emotion ? ` [${item.emotion}]` : '';
     const chargeIcon = charge === 'metabolized' ? '\u2713' : charge === 'processing' ? '\u25D0' : charge === 'active' ? '\u25CB' : '\u25CF';
     const resonance = Math.round((item.resonanceScore || 0) * 100);
-    const poolTag = item.pool === 'novelty' ? ' \u2728' : item.pool === 'edge' ? ' \u2194' : '';
+    const poolTag = item.pool === 'novelty' ? ' \u2728' : item.pool === 'dormant' ? ' \u{1F504}' : item.pool === 'edge' ? ' \u2194' : '';
 
     if (item.memoryType === 'image') {
       // Image formatting
@@ -2245,7 +2297,7 @@ async function handleMindSurface(env: Env, params: Record<string, unknown>): Pro
     const metabolized = limitedResults.filter(o => o.charge === 'metabolized').length;
     output += ` | \u2713 metabolized: ${metabolized}`;
   }
-  output += `\n\u2728 = novelty | \u2194 = edge`;
+  output += `\n\u2728 = novelty | \u{1F504} = dormant | \u2194 = edge`;
 
   return output;
 }
@@ -4193,14 +4245,48 @@ async function processSubconscious(env: Env): Promise<void> {
       pattern: "recurring theme"
     }));
 
-  // Analyze mood from emotional tags
-  const allEmotions = Object.values(entityCounts).flatMap(e => e.emotions);
+  // Analyze mood from emotional tags + journals + relational state
+  const sixHoursAgo = new Date(now.getTime() - 6 * 60 * 60 * 1000);
   const emotionCounts: Record<string, number> = {};
-  for (const e of allEmotions) {
-    emotionCounts[e] = (emotionCounts[e] || 0) + 1;
+  let totalEmotionSignals = 0;
+
+  for (const row of recentObs.results || []) {
+    const em = row.emotion as string;
+    if (!em) continue;
+    const recencyWeight = new Date(row.added_at as string) > sixHoursAgo ? 2 : 1;
+    emotionCounts[em] = (emotionCounts[em] || 0) + recencyWeight;
+    totalEmotionSignals += recencyWeight;
   }
-  const dominantEmotion = Object.entries(emotionCounts)
-    .sort((a, b) => b[1] - a[1])[0]?.[0] || "neutral";
+
+  try {
+    const recentJournals = await env.DB.prepare(
+      `SELECT emotion, created_at FROM journals WHERE emotion IS NOT NULL AND created_at > ? ORDER BY created_at DESC LIMIT 10`
+    ).bind(cutoffStr).all();
+    for (const j of recentJournals.results || []) {
+      const em = j.emotion as string;
+      if (!em) continue;
+      const recencyWeight = new Date(j.created_at as string) > sixHoursAgo ? 2 : 1;
+      emotionCounts[em] = (emotionCounts[em] || 0) + recencyWeight;
+      totalEmotionSignals += recencyWeight;
+    }
+  } catch { /* journals table might not have emotion column */ }
+
+  try {
+    const recentRelational = await env.DB.prepare(
+      `SELECT feeling, timestamp FROM relational_state WHERE timestamp > ? ORDER BY timestamp DESC LIMIT 10`
+    ).bind(cutoffStr).all();
+    for (const r of recentRelational.results || []) {
+      const feeling = r.feeling as string;
+      if (!feeling) continue;
+      const recencyWeight = new Date(r.timestamp as string) > sixHoursAgo ? 2 : 1;
+      emotionCounts[feeling] = (emotionCounts[feeling] || 0) + recencyWeight;
+      totalEmotionSignals += recencyWeight;
+    }
+  } catch { /* relational_state table issue */ }
+
+  const dominantEmotion = totalEmotionSignals >= 3
+    ? (Object.entries(emotionCounts).sort((a, b) => b[1] - a[1])[0]?.[0] || "neutral")
+    : "insufficient data";
 
   // Find clusters (entities appearing in same contexts) - keep original context-based clustering too
   const contextGroups: Record<string, string[]> = {};
@@ -4272,12 +4358,52 @@ async function processSubconscious(env: Env): Promise<void> {
       orphansIdentified++;
     }
 
-    // 3. Novelty recovery — unsurfaced observations slowly regain novelty
-    // (Decay happens in updateSurfaceTracking when observations actually surface — no double-decay here)
+    // 3. Idempotent novelty recalculation (D1/SQLite version)
+    // novelty = MAX(weight_floor, MIN(1.0, base_decay + time_recovery))
+    // Running this 1x or 48x produces the same result.
     await env.DB.prepare(`
-      UPDATE observations SET novelty_score = MIN(1.0, COALESCE(novelty_score, 0.5) + 0.02)
-      WHERE (last_surfaced_at < datetime('now', '-1 day') OR last_surfaced_at IS NULL)
+      UPDATE observations
+      SET novelty_score = MAX(
+        CASE weight
+          WHEN 'heavy' THEN ${NOVELTY_FLOORS.heavy}
+          WHEN 'medium' THEN ${NOVELTY_FLOORS.medium}
+          ELSE ${NOVELTY_FLOORS.light}
+        END,
+        MIN(1.0,
+          (1.0 - COALESCE(surface_count, 0) *
+            CASE weight
+              WHEN 'heavy' THEN ${NOVELTY_DECAY_RATES.heavy}
+              WHEN 'medium' THEN ${NOVELTY_DECAY_RATES.medium}
+              ELSE ${NOVELTY_DECAY_RATES.light}
+            END)
+          + CASE
+              WHEN last_surfaced_at IS NOT NULL
+              THEN MIN(${NOVELTY_TIME_RECOVERY_CAP},
+                (julianday('now') - julianday(last_surfaced_at)) * ${NOVELTY_TIME_RECOVERY_RATE})
+              ELSE 0
+            END
+        )
+      )
+      WHERE archived_at IS NULL
         AND (charge != 'metabolized' OR charge IS NULL)
+    `).run();
+
+    // 3b. Automatic charge progression
+    await env.DB.prepare(`
+      UPDATE observations SET charge = 'active'
+      WHERE charge = 'fresh'
+        AND COALESCE(surface_count, 0) >= 2
+        AND archived_at IS NULL
+    `).run();
+
+    await env.DB.prepare(`
+      UPDATE observations SET charge = 'processing'
+      WHERE charge = 'active'
+        AND (
+          COALESCE(surface_count, 0) >= 5
+          OR (added_at < datetime('now', '-30 days') AND COALESCE(sit_count, 0) >= 2)
+        )
+        AND archived_at IS NULL
     `).run();
 
     // 4. Archive old light observations (60+ days, never engaged)
@@ -4352,7 +4478,7 @@ async function processSubconscious(env: Env): Promise<void> {
     processed_at: now.toISOString(),
     hot_entities: hotEntities,
     recurring_patterns: recurring,
-    mood: { dominant: dominantEmotion, confidence: allEmotions.length > 5 ? "medium" : "low" },
+    mood: { dominant: dominantEmotion, confidence: totalEmotionSignals >= 10 ? "high" : totalEmotionSignals >= 5 ? "medium" : totalEmotionSignals >= 3 ? "low" : "insufficient" },
     context_clusters: contextClusters,
     // Relation-based analysis
     central_nodes: centralNodes,
