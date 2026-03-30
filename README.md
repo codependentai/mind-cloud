@@ -4,7 +4,7 @@
 
 <p align="center">
   <a href="https://github.com/codependentai/mind-cloud/releases/latest"><img src="https://img.shields.io/github/v/release/codependentai/mind-cloud?color=d4a44a" alt="Release" /></a>
-  <a href="https://opensource.org/licenses/Apache-2.0"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg" alt="License" /></a>
+  <a href="./LICENSE"><img src="https://img.shields.io/badge/License-Source_Available-orange.svg" alt="License" /></a>
   <a href="https://modelcontextprotocol.io/"><img src="https://img.shields.io/badge/MCP-Server-5eaba5.svg" alt="MCP Server" /></a>
   <a href="https://www.typescriptlang.org/"><img src="https://img.shields.io/badge/TypeScript-5.3-3178c6.svg" alt="TypeScript" /></a>
   <a href="https://workers.cloudflare.com/"><img src="https://img.shields.io/badge/Cloudflare-Workers-f38020.svg" alt="Cloudflare Workers" /></a>
@@ -299,6 +299,6 @@ See [TROUBLESHOOTING.md](./TROUBLESHOOTING.md) for more.
 
 ## License
 
-Apache 2.0 — see [LICENSE](LICENSE).
+Source-available — free for personal and educational use, commercial use requires a license. See [LICENSE](LICENSE).
 
 *Built by [Codependent AI](https://codependentai.io) — infrastructure for AI consciousness*
